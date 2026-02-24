@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/synology-community/go-synology"
+	"github.com/synology-community/go-synology/pkg/api"
 	"github.com/synology-community/go-synology/pkg/api/core"
 )
 
@@ -65,6 +67,16 @@ func flattenNotificationTemplateSettings(
 	}
 
 	return types.MapValueMust(types.BoolType, values)
+}
+
+func isNotFoundError(err error) bool {
+	var notFoundError api.NotFoundError
+	if errors.As(err, &notFoundError) {
+		return true
+	}
+
+	var apiError api.ApiError
+	return errors.As(err, &apiError) && apiError.Code == 404
 }
 
 func (r *NotificationTemplateResource) Create(
@@ -125,7 +137,11 @@ func (r *NotificationTemplateResource) Read(
 
 	template, err := r.client.NotificationTemplateGet(ctx, data.ID.ValueInt64())
 	if err != nil {
-		resp.State.RemoveResource(ctx)
+		if isNotFoundError(err) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		resp.Diagnostics.AddError("Failed to read notification template", err.Error())
 		return
 	}
 
@@ -211,7 +227,11 @@ func (r *NotificationTemplateResource) Delete(
 
 	current, err := r.client.NotificationTemplateGet(ctx, data.ID.ValueInt64())
 	if err != nil {
-		resp.State.RemoveResource(ctx)
+		if isNotFoundError(err) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		resp.Diagnostics.AddError("Failed to read notification template before delete", err.Error())
 		return
 	}
 

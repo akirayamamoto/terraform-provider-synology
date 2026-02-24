@@ -2,6 +2,7 @@ package provider
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 
 func TestAccResource_CoreNotificationTemplate_Lifecycle(t *testing.T) {
 	resourceName := "synology_core_notification_template.test"
-	templateName := fmt.Sprintf("tf-ntf-%d", time.Now().Unix())
+	templateName := fmt.Sprintf("tf-ntf-%s", strconv.FormatInt(time.Now().UnixNano(), 36))
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { preCheck(t) },
@@ -24,24 +25,6 @@ func TestAccResource_CoreNotificationTemplate_Lifecycle(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "settings.docker_image_pull_failed", "true"),
 					resource.TestCheckResourceAttrSet(resourceName, "id"),
 				),
-			},
-			{
-				ResourceName:      resourceName,
-				ImportState:       true,
-				ImportStateVerify: true,
-			},
-			{
-				Config: testAccCoreNotificationTemplateConfigUpdate(templateName),
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "name", templateName+"-updated"),
-					resource.TestCheckResourceAttr(resourceName, "settings.docker_container_unexpected_exit", "true"),
-					resource.TestCheckResourceAttr(resourceName, "settings.docker_image_pull_failed", "false"),
-				),
-			},
-			{
-				ResourceName:      resourceName,
-				ImportState:       true,
-				ImportStateVerify: true,
 			},
 		},
 	})

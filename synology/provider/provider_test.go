@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +37,11 @@ type logConsumer struct {
 	StdOut bool
 }
 
+type dsmTestClient struct {
+	host   string
+	client *client.Client
+}
+
 func (l *logConsumer) Accept(logEntry testcontainers.Log) {
 	if logEntry.LogType == testcontainers.StdoutLog && l.StdOut {
 		fmt.Printf("[DSM] %s", logEntry.Content)
@@ -44,6 +52,49 @@ func (l *logConsumer) Accept(logEntry testcontainers.Log) {
 }
 
 func runAcceptanceTests(m *testing.M) int {
+	user := os.Getenv("TEST_SYNOLOGY_USER")
+	if user == "" {
+		user = "admin"
+	}
+
+	password := os.Getenv("TEST_SYNOLOGY_PASSWORD")
+	externalHost := os.Getenv("TEST_SYNOLOGY_HOST")
+
+	if err := os.Setenv("SYNOLOGY_USER", user); err != nil {
+		panic(err)
+	}
+
+	if err := os.Setenv("SYNOLOGY_PASSWORD", password); err != nil {
+		panic(err)
+	}
+
+	if err := os.Setenv("SYNOLOGY_SKIP_CERT_CHECK", "true"); err != nil {
+		panic(err)
+	}
+
+	if externalHost != "" {
+		cli, createErr := client.New(api.Options{
+			Host:       externalHost,
+			VerifyCert: false,
+			RetryLimit: 5,
+		})
+		if createErr != nil {
+			panic(createErr)
+		}
+		testClient, ok := cli.(*client.Client)
+		if !ok {
+			panic("failed to cast client")
+		}
+		readyHost, err := waitForDSMAPI(context.Background(), []dsmTestClient{{host: externalHost, client: testClient}}, user, password)
+		if err != nil {
+			panic(err)
+		}
+		if err := os.Setenv("SYNOLOGY_HOST", readyHost); err != nil {
+			panic(err)
+		}
+		return m.Run()
+	}
+
 	// Disable Ryuk reaper to avoid connection issues in local development
 	if err := os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true"); err != nil {
 		panic(err)
@@ -85,50 +136,32 @@ func runAcceptanceTests(m *testing.M) int {
 		panic(err)
 	}
 
-	// Convert to HTTPS endpoint
+	// Discover both endpoints; we prefer HTTPS but can fall back to HTTP during boot.
 	httpsEndpoint, err := container.PortEndpoint(ctx, "5001/tcp", "https")
 	if err != nil {
-		// Fallback to HTTP if HTTPS not available
 		httpsEndpoint = endpoint
 		fmt.Printf("Warning: HTTPS port not available, using HTTP: %s\n", endpoint)
 	}
 
-	const user = "admin"
-	const password = "synology"
-
-	if err = os.Setenv("SYNOLOGY_HOST", httpsEndpoint); err != nil {
-		panic(err)
-	}
-
-	if err = os.Setenv("SYNOLOGY_USER", user); err != nil {
-		panic(err)
-	}
-
-	if err = os.Setenv("SYNOLOGY_PASSWORD", password); err != nil {
-		panic(err)
-	}
-
-	if err = os.Setenv("SYNOLOGY_SKIP_CERT_CHECK", "true"); err != nil {
-		panic(err)
-	}
-
-	// Initialize test client
-	cli, err := client.New(api.Options{
+	cli, createErr := client.New(api.Options{
 		Host:       httpsEndpoint,
 		VerifyCert: false,
 		RetryLimit: 5,
 	})
-	if err != nil {
-		panic(err)
+	if createErr != nil {
+		panic(createErr)
 	}
-
 	testClient, ok := cli.(*client.Client)
 	if !ok {
 		panic("failed to cast client")
 	}
+	clients := []dsmTestClient{{host: httpsEndpoint, client: testClient}}
 
-	// Wait for DSM API to be ready
-	if err = waitForDSMAPI(ctx, testClient, user, password); err != nil {
+	readyHost, err := waitForDSMAPI(ctx, clients, user, password)
+	if err != nil {
+		panic(err)
+	}
+	if err = os.Setenv("SYNOLOGY_HOST", readyHost); err != nil {
 		panic(err)
 	}
 
@@ -139,7 +172,6 @@ func preCheck(t *testing.T) {
 	variables := []string{
 		"SYNOLOGY_HOST",
 		"SYNOLOGY_USER",
-		"SYNOLOGY_PASSWORD",
 	}
 
 	for _, variable := range variables {
@@ -152,8 +184,16 @@ func preCheck(t *testing.T) {
 
 // waitForDSMAPI waits for the DSM API to be ready and accepting requests
 // This is necessary because the container may report as healthy before the API is fully initialized.
-func waitForDSMAPI(ctx context.Context, client *client.Client, user, password string) error {
+func waitForDSMAPI(ctx context.Context, clients []dsmTestClient, user, password string) (string, error) {
 	maxRetries := 120
+	if runtime.GOARCH == "arm64" {
+		maxRetries = 360
+	}
+	if configured := os.Getenv("TEST_DSM_MAX_RETRIES"); configured != "" {
+		if parsed, err := strconv.Atoi(configured); err == nil && parsed > 0 {
+			maxRetries = parsed
+		}
+	}
 	retryDelay := 5 * time.Second
 
 	fmt.Printf(
@@ -162,37 +202,47 @@ func waitForDSMAPI(ctx context.Context, client *client.Client, user, password st
 		retryDelay,
 	)
 
+	var lastErr error
 	for i := range maxRetries {
-		_, err := client.Login(ctx, api.LoginOptions{
-			Username: user,
-			Password: password,
-		})
-		if err == nil {
-			fmt.Printf("✓ DSM API is ready after %d attempts\n", i+1)
-			return nil
+		for _, c := range clients {
+			_, err := c.client.Login(ctx, api.LoginOptions{
+				Username: user,
+				Password: password,
+			})
+			if err == nil {
+				fmt.Printf("✓ DSM API is ready after %d attempts via %s\n", i+1, c.host)
+				return c.host, nil
+			}
+			lastErr = err
 		}
 
-		// Check if it's a login error (expected during setup) vs connection error
 		if i < maxRetries-1 {
 			if (i+1)%10 == 0 {
+				errText := ""
+				if lastErr != nil {
+					errText = lastErr.Error()
+				}
+				if strings.Contains(strings.ToLower(errText), "eof") {
+					errText = fmt.Sprintf("%s (DSM may still be initializing TLS/auth)", errText)
+				}
 				fmt.Printf(
 					"Still waiting... (attempt %d/%d): %v\n",
 					i+1,
 					maxRetries,
-					err.Error(),
+					errText,
 				)
 			}
 			time.Sleep(retryDelay)
 			continue
 		}
 
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"DSM API did not become ready after %d attempts (waited %v): %w",
 			maxRetries,
 			time.Duration(maxRetries)*retryDelay,
-			err,
+			lastErr,
 		)
 	}
 
-	return fmt.Errorf("DSM API did not become ready after %d attempts", maxRetries)
+	return "", fmt.Errorf("DSM API did not become ready after %d attempts", maxRetries)
 }

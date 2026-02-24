@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/synology-community/go-synology/pkg/api"
+	apiCore "github.com/synology-community/go-synology/pkg/api/core"
 )
 
 func TestExpandNotificationTemplateSettings_SortedOrder(t *testing.T) {
@@ -34,6 +35,34 @@ func TestFlattenNotificationTemplateSettings(t *testing.T) {
 	got := flattenNotificationTemplateSettings(nil)
 	if got.IsNull() || got.IsUnknown() {
 		t.Fatalf("expected concrete map value")
+	}
+}
+
+func TestMergeNotificationTemplateSettings_PreservesKnownFalseValues(t *testing.T) {
+	known := map[string]bool{
+		"docker_container_unexpected_exit": false,
+		"docker_image_pull_failed":         true,
+	}
+	fromAPI := []apiCore.NotificationTemplateSetting{
+		{Tag: "docker_image_pull_failed", Enabled: true},
+	}
+
+	got := mergeNotificationTemplateSettings(fromAPI, known)
+
+	values := map[string]bool{}
+	diags := got.ElementsAs(t.Context(), &values, true)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+
+	if len(values) != 2 {
+		t.Fatalf("expected 2 settings, got %d (%v)", len(values), values)
+	}
+	if values["docker_container_unexpected_exit"] {
+		t.Fatalf("expected docker_container_unexpected_exit=false, got true")
+	}
+	if !values["docker_image_pull_failed"] {
+		t.Fatalf("expected docker_image_pull_failed=true, got false")
 	}
 }
 

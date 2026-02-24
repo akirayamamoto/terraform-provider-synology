@@ -11,6 +11,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/synology-community/go-synology"
 	"github.com/synology-community/go-synology/pkg/api"
@@ -69,6 +71,24 @@ func flattenNotificationTemplateSettings(
 	return types.MapValueMust(types.BoolType, values)
 }
 
+func mergeNotificationTemplateSettings(
+	settings []core.NotificationTemplateSetting,
+	known map[string]bool,
+) types.Map {
+	values := make(map[string]attr.Value, len(settings)+len(known))
+	for key, enabled := range known {
+		values[key] = types.BoolValue(enabled)
+	}
+	for _, setting := range settings {
+		if setting.Tag == "" {
+			continue
+		}
+		values[setting.Tag] = types.BoolValue(setting.Enabled)
+	}
+
+	return types.MapValueMust(types.BoolType, values)
+}
+
 func isNotFoundError(err error) bool {
 	var notFoundError api.NotFoundError
 	if errors.As(err, &notFoundError) {
@@ -114,7 +134,7 @@ func (r *NotificationTemplateResource) Create(
 		return
 	}
 
-	flattenedSettings := flattenNotificationTemplateSettings(template.Settings)
+	flattenedSettings := mergeNotificationTemplateSettings(template.Settings, settings)
 
 	data.ID = types.Int64Value(template.TemplateID)
 	data.Name = types.StringValue(template.EffectiveName())
@@ -145,7 +165,12 @@ func (r *NotificationTemplateResource) Read(
 		return
 	}
 
-	settings := flattenNotificationTemplateSettings(template.Settings)
+	knownSettings := map[string]bool{}
+	resp.Diagnostics.Append(data.Settings.ElementsAs(ctx, &knownSettings, true)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	settings := mergeNotificationTemplateSettings(template.Settings, knownSettings)
 
 	data.ID = types.Int64Value(template.TemplateID)
 	data.Name = types.StringValue(template.EffectiveName())
@@ -195,7 +220,16 @@ func (r *NotificationTemplateResource) Update(
 		},
 	)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to update notification template", err.Error())
+		resp.Diagnostics.AddError(
+			"Failed to update notification template",
+			fmt.Sprintf(
+				"%s (template_id=%d template_name=%q settings=%v)",
+				err.Error(),
+				data.ID.ValueInt64(),
+				data.Name.ValueString(),
+				settings,
+			),
+		)
 		return
 	}
 
@@ -205,7 +239,7 @@ func (r *NotificationTemplateResource) Update(
 		return
 	}
 
-	flattenedSettings := flattenNotificationTemplateSettings(updated.Settings)
+	flattenedSettings := mergeNotificationTemplateSettings(updated.Settings, settings)
 
 	data.Name = types.StringValue(updated.EffectiveName())
 	data.IsDefault = types.BoolValue(updated.DefaultTemplate())
@@ -271,6 +305,9 @@ func (r *NotificationTemplateResource) Schema(
 			"id": schema.Int64Attribute{
 				MarkdownDescription: "Notification template ID.",
 				Computed:            true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 			},
 			"name": schema.StringAttribute{
 				MarkdownDescription: "Notification template name.",

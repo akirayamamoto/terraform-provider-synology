@@ -2,7 +2,6 @@ package core_test
 
 import (
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -11,15 +10,15 @@ import (
 )
 
 func TestAccResource_CoreNotificationTemplate_Lifecycle(t *testing.T) {
-	providerConfig := testAccCoreProviderConfig(t)
 	resourceName := "synology_core_notification_template.test"
 	templateName := fmt.Sprintf("tf-ntf-%d", time.Now().Unix())
 
 	r.Test(t, r.TestCase{
+		PreCheck:                 func() { acctest.TestAccPreCheck(t) },
 		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories(t),
 		Steps: []r.TestStep{
 			{
-				Config: testAccCoreNotificationTemplateConfigCreate(providerConfig, templateName),
+				Config: testAccCoreNotificationTemplateConfigCreate(templateName),
 				Check: r.ComposeTestCheckFunc(
 					r.TestCheckResourceAttr(resourceName, "name", templateName),
 					r.TestCheckResourceAttr(resourceName, "settings.docker_container_unexpected_exit", "false"),
@@ -33,7 +32,7 @@ func TestAccResource_CoreNotificationTemplate_Lifecycle(t *testing.T) {
 				ImportStateVerify: true,
 			},
 			{
-				Config: testAccCoreNotificationTemplateConfigUpdate(providerConfig, templateName),
+				Config: testAccCoreNotificationTemplateConfigUpdate(templateName),
 				Check: r.ComposeTestCheckFunc(
 					r.TestCheckResourceAttr(resourceName, "name", templateName+"-updated"),
 					r.TestCheckResourceAttr(resourceName, "settings.docker_container_unexpected_exit", "true"),
@@ -49,33 +48,9 @@ func TestAccResource_CoreNotificationTemplate_Lifecycle(t *testing.T) {
 	})
 }
 
-func testAccCoreProviderConfig(t *testing.T) string {
-	host := os.Getenv("SYNOLOGY_HOST")
-	user := os.Getenv("SYNOLOGY_USER")
-	password := os.Getenv("SYNOLOGY_PASSWORD")
-	skipCertCheck := os.Getenv("SYNOLOGY_SKIP_CERT_CHECK")
-
-	if host == "" || user == "" || password == "" {
-		t.Skip("acceptance test requires SYNOLOGY_HOST, SYNOLOGY_USER, and SYNOLOGY_PASSWORD")
-	}
-
-	if skipCertCheck == "" {
-		skipCertCheck = "true"
-	}
-
+func testAccCoreNotificationTemplateConfigCreate(name string) string {
 	return fmt.Sprintf(`
-provider "synology" {
-  host            = %q
-  user            = %q
-  password        = %q
-  skip_cert_check = %q
-}
-`, host, user, password, skipCertCheck)
-}
-
-func testAccCoreNotificationTemplateConfigCreate(providerConfig, name string) string {
-	return fmt.Sprintf(`
-%s
+provider "synology" {}
 
 resource "synology_core_notification_template" "test" {
   name = %q
@@ -85,12 +60,12 @@ resource "synology_core_notification_template" "test" {
     docker_image_pull_failed         = true
   }
 }
-`, providerConfig, name)
+`, name)
 }
 
-func testAccCoreNotificationTemplateConfigUpdate(providerConfig, name string) string {
+func testAccCoreNotificationTemplateConfigUpdate(name string) string {
 	return fmt.Sprintf(`
-%s
+provider "synology" {}
 
 resource "synology_core_notification_template" "test" {
   name = %q
@@ -100,5 +75,5 @@ resource "synology_core_notification_template" "test" {
     docker_image_pull_failed         = false
   }
 }
-`, providerConfig, name+"-updated")
+`, name+"-updated")
 }

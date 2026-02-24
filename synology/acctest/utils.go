@@ -1,7 +1,6 @@
 package acctest
 
 import (
-	"os"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
@@ -18,15 +17,7 @@ func ProtoV6ProviderFactories(t *testing.T) map[string]func() (tfprotov6.Provide
 }
 
 func TestAccPreCheck(t *testing.T) {
-	variables := []string{
-		"SYNOLOGY_HOST",
-		"SYNOLOGY_USER",
-		"SYNOLOGY_PASSWORD",
-	}
-
-	for _, variable := range variables {
-		if os.Getenv(variable) == "" {
-			t.Fatalf("`%s` must be set for acceptance tests!", variable)
-		}
-	}
+	// You can add code here to run prior to any test case execution, for example assertions
+	// about the appropriate environment variables being set are common to see in a pre-check
+	// function.
 }

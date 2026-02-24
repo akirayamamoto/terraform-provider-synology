@@ -1,29 +1,28 @@
-package core_test
+package provider
 
 import (
 	"fmt"
 	"testing"
 	"time"
 
-	r "github.com/hashicorp/terraform-plugin-testing/helper/resource"
-	"github.com/synology-community/terraform-provider-synology/synology/acctest"
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
 func TestAccResource_CoreNotificationTemplate_Lifecycle(t *testing.T) {
 	resourceName := "synology_core_notification_template.test"
 	templateName := fmt.Sprintf("tf-ntf-%d", time.Now().Unix())
 
-	r.Test(t, r.TestCase{
-		PreCheck:                 func() { acctest.TestAccPreCheck(t) },
-		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories(t),
-		Steps: []r.TestStep{
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { preCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
 			{
 				Config: testAccCoreNotificationTemplateConfigCreate(templateName),
-				Check: r.ComposeTestCheckFunc(
-					r.TestCheckResourceAttr(resourceName, "name", templateName),
-					r.TestCheckResourceAttr(resourceName, "settings.docker_container_unexpected_exit", "false"),
-					r.TestCheckResourceAttr(resourceName, "settings.docker_image_pull_failed", "true"),
-					r.TestCheckResourceAttrSet(resourceName, "id"),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "name", templateName),
+					resource.TestCheckResourceAttr(resourceName, "settings.docker_container_unexpected_exit", "false"),
+					resource.TestCheckResourceAttr(resourceName, "settings.docker_image_pull_failed", "true"),
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
 				),
 			},
 			{
@@ -33,10 +32,10 @@ func TestAccResource_CoreNotificationTemplate_Lifecycle(t *testing.T) {
 			},
 			{
 				Config: testAccCoreNotificationTemplateConfigUpdate(templateName),
-				Check: r.ComposeTestCheckFunc(
-					r.TestCheckResourceAttr(resourceName, "name", templateName+"-updated"),
-					r.TestCheckResourceAttr(resourceName, "settings.docker_container_unexpected_exit", "true"),
-					r.TestCheckResourceAttr(resourceName, "settings.docker_image_pull_failed", "false"),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "name", templateName+"-updated"),
+					resource.TestCheckResourceAttr(resourceName, "settings.docker_container_unexpected_exit", "true"),
+					resource.TestCheckResourceAttr(resourceName, "settings.docker_image_pull_failed", "false"),
 				),
 			},
 			{

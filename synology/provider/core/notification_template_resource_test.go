@@ -1,6 +1,12 @@
 package core
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+
+	"github.com/synology-community/go-synology/pkg/api"
+	apiCore "github.com/synology-community/go-synology/pkg/api/core"
+)
 
 func TestExpandNotificationTemplateSettings_SortedOrder(t *testing.T) {
 	input := map[string]bool{
@@ -29,5 +35,75 @@ func TestFlattenNotificationTemplateSettings(t *testing.T) {
 	got := flattenNotificationTemplateSettings(nil)
 	if got.IsNull() || got.IsUnknown() {
 		t.Fatalf("expected concrete map value")
+	}
+}
+
+func TestMergeNotificationTemplateSettings_PreservesKnownFalseValues(t *testing.T) {
+	known := map[string]bool{
+		"docker_container_unexpected_exit": false,
+		"docker_image_pull_failed":         true,
+	}
+	fromAPI := []apiCore.NotificationTemplateSetting{
+		{Tag: "docker_image_pull_failed", Enabled: true},
+	}
+
+	got := mergeNotificationTemplateSettings(fromAPI, known)
+
+	values := map[string]bool{}
+	diags := got.ElementsAs(t.Context(), &values, true)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+
+	if len(values) != 2 {
+		t.Fatalf("expected 2 settings, got %d (%v)", len(values), values)
+	}
+	if values["docker_container_unexpected_exit"] {
+		t.Fatalf("expected docker_container_unexpected_exit=false, got true")
+	}
+	if !values["docker_image_pull_failed"] {
+		t.Fatalf("expected docker_image_pull_failed=true, got false")
+	}
+}
+
+func TestIsNotFoundError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "typed not found error",
+			err:  api.NotFoundError(api.ApiError{Code: 404}),
+			want: true,
+		},
+		{
+			name: "raw api error with 404",
+			err:  api.ApiError{Code: 404},
+			want: true,
+		},
+		{
+			name: "wrapped not found error",
+			err:  fmt.Errorf("wrapped: %w", api.NotFoundError(api.ApiError{Code: 404})),
+			want: true,
+		},
+		{
+			name: "non-404 api error",
+			err:  api.ApiError{Code: 105},
+			want: false,
+		},
+		{
+			name: "generic error",
+			err:  fmt.Errorf("network timeout"),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isNotFoundError(tt.err); got != tt.want {
+				t.Fatalf("expected %v, got %v", tt.want, got)
+			}
+		})
 	}
 }
